@@ -3,144 +3,116 @@ import pandas as pd
 import networkx as nx
 from sklearn.neighbors import NearestNeighbors
 
+# Streamlit app title
+st.title("🍽️ The Food Recommender: What Goes Best With Your Meal?")
 
-st.title("Let's build a food recommender system!")
+st.write("""
+Imagine walking into your favorite restaurant. You’re excited, but the menu is overwhelming. 
+Wouldn’t it be great if you could get recommendations not just for what goes well together, 
+but also for price-friendly alternatives? Let's build a smart food recommender system to do just that!
+""")
 
+# Load and cache data
 @st.cache_data
-def load_data(file):
-    return pd.read_csv(file)
+def load_data():
+    return pd.read_csv('restaurant-1-orders.csv')
 
-df = load_data('restaurant-1-orders.csv')
-st.write("The initial dataframe looks like this -")
-st.write(df)
+df = load_data()
+st.write("### 📌 Step 1: Understanding the Raw Data")
+st.write("Here’s a glimpse of the raw order data:")
+st.dataframe(df.head())
 
-
-#df handling
+# Data Preprocessing
 @st.cache_data
-def data_preprocesssing(df):
+def preprocess_data(df):
     dfd = df.drop_duplicates(subset=['Item Name'])
     df.drop(['Order Number', 'Quantity', 'Product Price', 'Total products'], axis=1, inplace=True)
     dfd.drop(['Order Number','Order Date', 'Quantity', 'Total products'], axis=1, inplace=True)
+    
     df = df.groupby('Order Date', as_index=False).agg(
         {'Item Name': lambda x: ', '.join(x)}
     )
+    
     dfd.reset_index(drop=True, inplace=True)
-    df['Item Name'] = df['Item Name'].apply(lambda x: [dfd.loc[dfd['Item Name'] == item].index[0].astype(int) for item in x.split(", ")])
+    df['Item Name'] = df['Item Name'].apply(lambda x: [dfd.loc[dfd['Item Name'] == item].index[0] for item in x.split(", ")])
     return dfd, df
 
-dfd, df = data_preprocesssing(df=df)
-# -----------------------------------------------------------------
+dfd, df = preprocess_data(df)
 
-st.write("""After cleaning, processing, feature engineering, and grouping;
-            The datafram looks like this -""")
-st.write(df)
+st.write("### 📌 Step 2: Processed Data Ready for Predictions")
+st.write("After cleaning and feature engineering, here’s the refined dataset:")
+st.dataframe(df.head())
 
-# -----------------------------------------------------------------
-
-# complimentary recommendations
-
-st.write("""## Let's now build a recommendation engine that can predict what dishes go best with the selected dish.""")
-
-st.write("""For this problem statement we shall use a graph to capture
-         the relationships between the dishes that are ordered together.""")
+# Building the Co-Ordering Graph
+st.write("## 🍜 Step 3: Understanding Food Pairings with Graphs")
+st.write("""
+Customers tend to order dishes together. Let’s capture this relationship by 
+building a network where nodes represent dishes, and edges represent how frequently 
+these dishes are ordered together. The stronger the edge, the more often they are paired.
+""")
 
 # Graph building
-
-G = nx.empty_graph()
+G = nx.Graph()
 
 @st.cache_data
-def populate_graph(df, _G):
+def build_graph(df, _G):
     for _, row in df.iterrows():
-        current_items = row["Item Name"]  # Get the list of items in the row
-
-        # Fully connect all nodes in the current row
-        for i, node1 in enumerate(current_items):
-            for node2 in current_items[i+1:]:
-                # Check if the edge already exists
-                if G.has_edge(node1, node2):
-                    # Increment the weight of the edge
-                    G[node1][node2]['weight'] += 1
+        items = row["Item Name"]
+        for i, item1 in enumerate(items):
+            for item2 in items[i+1:]:
+                if G.has_edge(item1, item2):
+                    G[item1][item2]['weight'] += 1
                 else:
-                    # Add a new edge with weight 1
-                    G.add_edge(node1, node2, weight=1)
-
-    self_loops = list(nx.selfloop_edges(G))
-    print(f"Number of self-loops: {len(self_loops)}")
-    if len(self_loops) > 0:
-        print(f"Self-loops: {self_loops}")
-    G.remove_edges_from(nx.selfloop_edges(G))
+                    G.add_edge(item1, item2, weight=1)
 
     return G
 
-G = populate_graph(df, G)
+G = build_graph(df, G)
+st.write(f"🔗 **Graph Built!** It contains **{G.number_of_nodes()}** dishes and **{G.number_of_edges()}** connections.")
 
-# get recommendations
+# Getting top co-ordered dishes
+st.write("### 🔥 Find the Best Combinations!")
+selected_dish = st.selectbox("Choose a dish to see what goes best with it:", dfd["Item Name"].tolist())
 
-def get_top_k_adjacent_nodes(graph, node, k):
-    """
-    Get the top k adjacent nodes with the highest edge weights for a given node.
-
-    Args:
-        graph (nx.Graph): The graph object.
-        node: The node for which to find the top k neighbors.
-        k (int): The number of top neighbors to retrieve.
-
-    Returns:
-        list: A list of tuples (neighbor, weight) sorted by weight in descending order.
-    """
-    if node not in graph:
-        print(f"Node {node} is not in the graph.")
+def get_top_k_combinations(G, item, k):
+    if item not in G:
         return []
-    
-    # Get all neighbors of the node with their weights
-    neighbors = [(neighbor, graph[node][neighbor]['weight']) for neighbor in graph.neighbors(node)]
-    
-    # Sort the neighbors by weight in descending order
-    sorted_neighbors = sorted(neighbors, key=lambda x: x[1], reverse=True)
-    
-    # Return the top k neighbors
-    return sorted_neighbors[:k]
+    neighbors = [(neighbor, G[item][neighbor]['weight']) for neighbor in G.neighbors(item)]
+    return sorted(neighbors, key=lambda x: x[1], reverse=True)[:k]
 
+if selected_dish:
+    dish_index = dfd[dfd["Item Name"] == selected_dish].index[0]
+    recommendations = get_top_k_combinations(G, dish_index, 5)
 
-# Example usage
-node = 39  # The node to query
-k = 10  # Top k neighbors
-top_k_neighbors = get_top_k_adjacent_nodes(G, node, k)
-st.write(f"Top {k} neighbors of node {node}: {top_k_neighbors}")
+    st.write(f"🥗 **Top 5 dishes frequently ordered with {selected_dish}:**")
+    for dish, weight in recommendations:
+        st.write(f"- {dfd.iloc[dish]['Item Name']} (Ordered together {weight} times)")
 
-# -------------------------------------------------------------
+# Price-Based Alternative Recommendations
+st.write("## 💰 Step 4: Finding Price-Friendly Alternatives")
+st.write("""
+What if you want something similar but cheaper (or more premium)? 
+Let's use KNN to suggest dishes with similar pricing!
+""")
 
-# alternative recommendations
-
-st.write("""## Let's build a recommendation system for alternative options of a dish.""")
-
-# Extract prices as the feature for KNN
+# Fit KNN model
 prices = dfd["Product Price"].values.reshape(-1, 1)
+knn = NearestNeighbors(n_neighbors=5, metric='euclidean').fit(prices)
 
-# Initialize the KNN model
-k = 5
-knn = NearestNeighbors(n_neighbors=k, metric='euclidean')
-knn.fit(prices)
+def find_price_alternatives(item, dfd, knn):
+    item_price = dfd.loc[dfd["Item Name"] == item, "Product Price"].values[0].reshape(-1, 1)
+    distances, indices = knn.kneighbors(item_price)
+    return [(dfd.iloc[idx]["Item Name"], dfd.iloc[idx]["Product Price"]) for idx in indices[0]]
 
-# Function to find k nearest neighbors for a given item
-def find_knn(item_name, df, knn_model):
-    # Get the price of the given item
-    item_price = df.loc[df["Item Name"] == item_name, "Product Price"].values[0].reshape(-1, 1)
-    
-    # Find k nearest neighbors
-    distances, indices = knn_model.kneighbors(item_price)
-    
-    # Get the corresponding items and their distances
-    neighbors = [(df.iloc[idx]["Item Name"], df.iloc[idx]["Product Price"], dist) 
-                 for idx, dist in zip(indices[0], distances[0])]
-    
-    return neighbors
+if selected_dish:
+    alternatives = find_price_alternatives(selected_dish, dfd, knn)
+    st.write(f"💲 **Top 5 price-friendly alternatives for {selected_dish}:**")
+    for alt_dish, price in alternatives:
+        st.write(f"- {alt_dish} (Price: ${price:.2f})")
 
-k = 5  # Number of neighbors
-item_to_query = "Tandoori Chicken"
-result = find_knn(item_to_query, dfd, knn)
-
-# Print results
-st.write(f"Top {k} items with relatable prices to '{item_to_query}':")
-for neighbor in result:
-    st.write(f"Item: {neighbor[0]}, Price: {neighbor[1]}, Distance: {neighbor[2]:.2f}")
+st.write("### 🎯 Conclusion")
+st.write("""
+With this recommender, you can now make informed food choices! Whether you want 
+to find the perfect pairing or look for budget-friendly alternatives, our model 
+helps make dining decisions smarter and more enjoyable! 🍽️
+""")
