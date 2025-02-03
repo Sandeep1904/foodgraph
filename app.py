@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import networkx as nx
+from sklearn.neighbors import NearestNeighbors
 
 
 st.title("Let's build a food recommender system!")
@@ -107,4 +108,39 @@ k = 10  # Top k neighbors
 top_k_neighbors = get_top_k_adjacent_nodes(G, node, k)
 st.write(f"Top {k} neighbors of node {node}: {top_k_neighbors}")
 
+# -------------------------------------------------------------
 
+# alternative recommendations
+
+st.write("""## Let's build a recommendation system for alternative options of a dish.""")
+
+# Extract prices as the feature for KNN
+prices = dfd["Product Price"].values.reshape(-1, 1)
+
+# Initialize the KNN model
+k = 5
+knn = NearestNeighbors(n_neighbors=k, metric='euclidean')
+knn.fit(prices)
+
+# Function to find k nearest neighbors for a given item
+def find_knn(item_name, df, knn_model):
+    # Get the price of the given item
+    item_price = df.loc[df["Item Name"] == item_name, "Product Price"].values[0].reshape(-1, 1)
+    
+    # Find k nearest neighbors
+    distances, indices = knn_model.kneighbors(item_price)
+    
+    # Get the corresponding items and their distances
+    neighbors = [(df.iloc[idx]["Item Name"], df.iloc[idx]["Product Price"], dist) 
+                 for idx, dist in zip(indices[0], distances[0])]
+    
+    return neighbors
+
+k = 5  # Number of neighbors
+item_to_query = "Tandoori Chicken"
+result = find_knn(item_to_query, dfd, knn)
+
+# Print results
+st.write(f"Top {k} items with relatable prices to '{item_to_query}':")
+for neighbor in result:
+    st.write(f"Item: {neighbor[0]}, Price: {neighbor[1]}, Distance: {neighbor[2]:.2f}")
